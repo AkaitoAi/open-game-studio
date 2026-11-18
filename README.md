@@ -50,6 +50,14 @@ python studio.py --project "../My Game" workflow examples/beacon-relay.md --thro
 
 The workflow stages are producer, gameplay, world, models, UI, audio, integrator, QA, and marketing. Each adds its artifact directory to the next stage's inputs. It stops on a failed invocation or missing delivery report. QA must deliver a positive verdict to let a workflow advance. QA should be independently reviewed on the built player. The verdict is furnished by the agent and serves as a handoff gate. Review the resulting evidence before release. Marketing is opt-in through `--through marketing` or an individual job; publication is a creator action.
 
+### Shared memory and quota failover
+
+Each project keeps durable decisions and status in `.studio/memory.md`. Every agent receives its path and instructions to maintain it. Agents save partial work in the project and write `checkpoint.md` in their attempt folder as they go. Job folders keep attempts, logs and a `handoff.json` pointing to the accepted delivery. Keep secrets out of these files, since every enabled provider may read them.
+
+Enable two or more signed-in providers with `setup --agents codex claude`. If the assigned provider reports a recognizable quota or rate-limit error, the runner retries that role with the next enabled provider. The backup sees the same project files, shared memory, completed stage artifacts, and prior attempt folders. It must deliver its own report and QA verdict where applicable. A quota-limited provider is skipped for the rest of that workflow run. Each new workflow can try it again.
+
+If no backup can finish, the workflow stops with the project edits and checkpoints intact. Use `--from ROLE` and `--input` to point a later run at the relevant successful handoffs and interrupted attempt folder. This preserves saved files and checkpoints. Any reasoning or edits the provider never saved cannot be recovered.
+
 Use `--from ROLE` plus repeated `--input PATH` to pick up work from prior jobs. To extend the system, supply `--provider-file providers.json` with an ID mapped to an argument list such as `{"my-agent":["/absolute/path/to/agent","--stdin"]}`. The custom executable receives a UTF-8 prompt on standard input and runs from the game directory. It should emit a process exit code and create the requested report. Select it with `--agents` and assign it with `--route ROLE=my-agent`. Provider-specific credentials live in their CLI or local environment. Reusable role instructions live in `roles.json`.
 
 ## Production and release

@@ -63,6 +63,49 @@ class StudioTest(unittest.TestCase):
         run = next((self.project / ".studio/jobs").glob("workflow-*"))
         self.assertFalse((run / "marketing").exists())
 
+    def test_quota_failover_preserves_checkpoint_and_workspace(self):
+        mock = self.project.parent / "handoff.py"
+        mock.write_text(
+            """import json, re, sys
+from pathlib import Path
+prompt = sys.stdin.read()
+folder = Path(re.search(r'Job output directory: (.+)', prompt)[1])
+memory = Path('.studio/memory.md')
+assert memory.is_file()
+partial = Path('partial-work.txt')
+if sys.argv[1] == 'primary':
+    partial.write_text('saved edit')
+    memory.write_text('The relay uses amber.')
+    (folder / 'checkpoint.md').write_text('Next: verify the core interaction.')
+    (folder / 'report.md').write_text('Incomplete report')
+    print(json.dumps({'type': 'turn.failed', 'error': {'message': 'You have hit your usage limit'}}))
+    sys.exit(1)
+assert partial.read_text() == 'saved edit'
+assert memory.read_text() == 'The relay uses amber.'
+if 'role: producer' in prompt:
+    assert 'Prior attempt folders' in prompt
+    checkpoint = folder.parent / 'attempt-1-primary/checkpoint.md'
+    assert checkpoint.read_text() == 'Next: verify the core interaction.'
+else:
+    assert 'attempt-2-backup' in prompt
+(folder / 'report.md').write_text('Verified and completed')
+""",
+            encoding="utf-8",
+        )
+        mapping = mock.with_suffix(".json")
+        mapping.write_text(json.dumps({
+            name: [sys.executable, str(mock), name] for name in ("primary", "backup")
+        }), encoding="utf-8")
+        self.run_cli("setup", "--engine", "godot", "--agents", "primary", "backup",
+                     "--provider-file", str(mapping), "--non-interactive")
+        self.run_cli("workflow", str(REPO / "examples/beacon-relay.md"), "--through", "gameplay")
+        run = next((self.project / ".studio/jobs").glob("workflow-*"))
+        for role in ("producer", "gameplay"):
+            handoff = json.loads((run / role / "handoff.json").read_text(encoding="utf-8"))
+            self.assertEqual(handoff["provider"], "backup")
+            self.assertEqual(handoff["exit_code"], 0)
+        self.assertFalse((run / "gameplay/attempt-1-primary").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -219,21 +219,80 @@ def job_folder(root, role):
     return directory
 
 
+QUOTA_ERROR = re.compile(
+    r"\b(?:429|rate[_ -]?limit(?:ed|[_ -]?exceeded|[_ -]?error)?|"
+    r"usage[_ -]?limit|insufficient[_ -]?quota|quota[_ -]?exceeded|"
+    r"hit your (?:limit|usage limit)|out of (?:credits|quota)|"
+    r"reached your (?:usage )?limit|resource[_ -]?exhausted)\b", re.IGNORECASE
+)
+
+
+def quota_failure(directory, code):
+    # Only inspect provider error events and failing CLI diagnostics.
+    with (directory / "stdout.log").open(encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if (event.get("type") in {"error", "turn.failed", "rate_limit_event"}
+                    or event.get("is_error") is True or event.get("error")):
+                if event.get("type") == "rate_limit_event":
+                    info = event.get("rate_limit_info")
+                    if isinstance(info, dict) and info.get("status") == "rejected":
+                        return True
+                    continue
+                detail = {key: event[key] for key in ("error", "message", "result", "errors", "message_type")
+                          if key in event}
+                if QUOTA_ERROR.search(json.dumps(detail)):
+                    return True
+    if code not in (0, 124):
+        with (directory / "stderr.log").open("rb") as stream:
+            stream.seek(max(0, stream.seek(0, os.SEEK_END) - 65536))
+            return bool(QUOTA_ERROR.search(stream.read().decode("utf-8", errors="replace")))
+    return False
+
+
+def save_json(path, value):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def shared_memory(root):
+    path = root / ".studio/memory.md"
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            stream.write("# Project memory\n\nRecord durable decisions, current state, "
+                         "the last passing build, and next steps here. Keep credentials out.\n")
+    except FileExistsError:
+        pass
+    return path
+
+
 def run_job(args, root, config):
     provider = args.provider or config["roles"][args.role]
     if provider not in config["providers"]:
         raise ValueError("Enable this provider in setup before assigning jobs to it.")
     directory = getattr(args, "directory", None) or job_folder(root, args.role)
     directory.mkdir(parents=True, exist_ok=True)
-    relative = directory.relative_to(root).as_posix()
     brief = Path(args.brief).read_text(encoding="utf-8")
     inputs = [str(Path(path).resolve()) for path in args.input]
     tools = {name: config["tools"].get(name) or executable(name, root)
              for name in (config["engine"], "blender", "photoshop", "ffmpeg")}
+    memory = root / ".studio/memory.md"
+    if not args.dry_run:
+        memory = shared_memory(root)
     instructions = (
         f"Game studio role: {args.role}\nEngine: {config['engine']}\n"
         f"Role responsibilities: {ROLES[args.role]}\n"
-        f"Job output directory: {relative}\nInput artifact paths: {json.dumps(inputs)}\n"
+        f"Input artifact paths: {json.dumps(inputs)}\n"
+        f"Shared project memory: {memory.relative_to(root).as_posix()}\n"
+        "Read the shared project memory before working. Keep it current as milestones land, "
+        "including decisions, files changed, verification, and next steps. Use checkpoint.md "
+        "in the job output folder to record partial work throughout the job.\n"
         f"Tool executable paths (null means unavailable): {json.dumps(tools)}\n"
         "Respect repository instructions. Do not publish or install tools. "
         "Write a report.md in the job output directory recording actual files, tests, and open issues.\n"
@@ -241,20 +300,69 @@ def run_job(args, root, config):
         "For asset and marketing roles, stage derivatives in the job directory for integration.\n"
         f"\nCreator brief:\n{brief}\n"
     )
-    (directory / "prompt.txt").write_text(instructions, encoding="utf-8")
     if args.role == "qa":
         instructions += '\nWrite verdict.json with {"passed": true} only when acceptance checks passed. Use false if failed or unverified.\n'
-        (directory / "prompt.txt").write_text(instructions, encoding="utf-8")
-    print(f"{args.role} via {provider} -> {directory}", flush=True)
+    relative = directory.relative_to(root).as_posix()
+    (directory / "prompt.txt").write_text(
+        f"Job output directory: {relative}\n" + instructions, encoding="utf-8")
     if args.dry_run:
+        print(f"{args.role} via {provider} -> {directory}", flush=True)
         return 0
-    launch = custom_providers(config).get(provider) or PROVIDERS[provider]
-    argv = command_for(root, config, provider) + launch[1:]
-    result = execute(argv, root, directory, args.timeout, instructions)
-    if result == 0 and not (directory / "report.md").is_file():
+
+    exhausted = getattr(args, "exhausted", set())
+    candidates = [provider, *(name for name in config["providers"] if name != provider)]
+    attempts = []
+    result = 5
+    for candidate in candidates:
+        if candidate in exhausted:
+            continue
+        attempt = directory / f"attempt-{len(attempts) + 1}-{candidate}"
+        attempt.mkdir()
+        prompt = f"Job output directory: {attempt.relative_to(root).as_posix()}\n" + instructions
+        if attempts or exhausted:
+            prior = [item["directory"] for item in attempts if item["directory"]]
+            prompt += (
+                f"\nPrior attempt folders for this job: {json.dumps(prior)}\n"
+                "Inspect current project files and Git status/diff before editing. "
+                "Read any previous checkpoint and review previous staged assets. "
+                "Preserve existing edits and reuse verified outputs. Finish outstanding work "
+                "and write a fresh report (and QA verdict when applicable) to your own folder.\n"
+            )
+        (attempt / "prompt.txt").write_text(prompt, encoding="utf-8")
+        launch = custom_providers(config).get(candidate) or PROVIDERS[candidate]
+        try:
+            argv = command_for(root, config, candidate) + launch[1:]
+        except ValueError as error:
+            if not exhausted:
+                raise
+            attempts.append({"provider": candidate, "directory": None, "state": "unavailable"})
+            print(error, file=sys.stderr)
+            continue
+        print(f"{args.role} via {candidate} -> {attempt}", flush=True)
+        code = execute(argv, root, attempt, args.timeout, prompt)
+        limited = quota_failure(attempt, code)
+        result = 5 if limited else validate_delivery(attempt, args.role, code)
+        attempts.append({"provider": candidate, "directory": str(attempt),
+                         "exit_code": code, "state": "quota_limited" if limited else
+                         ("passed" if result == 0 else "failed")})
+        save_json(directory / "handoff.json", {"role": args.role, "attempts": attempts,
+                                             "exit_code": result, "provider": candidate,
+                                             "delivery": str(attempt) if result == 0 else None})
+        if not limited:
+            return result
+        exhausted.add(candidate)
+        print(f"{candidate} hit a usage limit. Checking remaining providers.", file=sys.stderr)
+    print("No remaining provider for this job. Checkpoints and edits were retained.", file=sys.stderr)
+    return result
+
+
+def validate_delivery(directory, role, code):
+    if code:
+        return code
+    if not (directory / "report.md").is_file():
         print("Provider exited successfully but did not deliver report.md.", file=sys.stderr)
         return 3
-    if result == 0 and args.role == "qa":
+    if role == "qa":
         try:
             verdict = json.loads((directory / "verdict.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -262,7 +370,7 @@ def run_job(args, root, config):
         if not isinstance(verdict, dict) or verdict.get("passed") is not True:
             print("QA did not return a passing verdict.", file=sys.stderr)
             return 4
-    return result
+    return 0
 
 
 def workflow(args, root, config):
@@ -275,16 +383,21 @@ def workflow(args, root, config):
     shutil.copyfile(args.brief, brief)
     state = {"dry_run": args.dry_run, "stages": {}}
     inputs = list(args.input)
+    exhausted = set()
     for role in STAGES[start:stop]:
         directory = run / role
         result = run_job(Namespace(role=role, provider=None, directory=directory, brief=brief,
-                                   input=inputs, dry_run=args.dry_run, timeout=args.timeout),
+                                   input=inputs, dry_run=args.dry_run, timeout=args.timeout,
+                                   exhausted=exhausted),
                          root, config)
-        state["stages"][role] = {"provider": config["roles"][role], "exit_code": result}
-        (run / "workflow.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        handoff = directory / "handoff.json"
+        delivery = json.loads(handoff.read_text(encoding="utf-8")) if handoff.is_file() else {}
+        state["stages"][role] = {"provider": delivery.get("provider", config["roles"][role]),
+                                 "exit_code": result}
+        save_json(run / "workflow.json", state)
         if result:
             return result
-        inputs = [*inputs, str(directory)]
+        inputs = [*inputs, delivery.get("delivery") or str(directory)]
     return 0
 
 
