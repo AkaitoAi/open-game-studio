@@ -147,40 +147,20 @@ def setup(args, root):
         if not sep or name not in LINKS or not Path(path).expanduser().is_file():
             raise ValueError(f"Expected --tool TOOL=EXISTING_EXECUTABLE, got {mapping!r}.")
         tools[name] = str(Path(path).expanduser().resolve())
-    sample = previous.get("sample", False)
     if not old:
         if root.exists() and any(item.name != ".git" for item in root.iterdir()):
             raise ValueError("A new project requires an empty directory or an empty Git repository.")
-        template = args.template
-        if template is None and not args.non_interactive:
-            template = input("Project template [blank/beacon, default blank]: ").strip().lower()
-        template = template or "blank"
-        if template not in {"blank", "beacon"}:
-            raise ValueError("Select blank or beacon.")
         shutil.copytree(HERE / "templates" / engine, root, dirs_exist_ok=True)
-        sample = template == "beacon"
-        if not sample and engine == "unity":
-            shutil.rmtree(root / "Assets" / "Editor")
-            (root / "Assets" / "BeaconGame.cs").unlink()
-        if not sample and engine == "godot":
-            (root / "beacon.tscn").unlink()
-            (root / "beacon.gd").unlink()
-            project_file = root / "project.godot"
-            project_file.write_text(project_file.read_text(encoding="utf-8")
-                                    .replace('config/name="Beacon Relay"', 'config/name="New Game"')
-                                    .replace('run/main_scene="res://beacon.tscn"\n', ''), encoding="utf-8")
     memory_commit = args.memory_commit
     if memory_commit is None:
         memory_commit = previous.get("memory_commit", False)
     config = {"engine": engine, "providers": providers, "roles": roles, "tools": tools,
               "memory_commit": memory_commit,
-              "custom_providers": custom, "sample": sample}
+              "custom_providers": custom}
     write_config(root, config)
     print(f"{engine} project at {root}")
     if engine == "unity":
         print("Use the editor patch in ProjectSettings/ProjectVersion.txt; activate it via Unity Hub.")
-        if config["sample"]:
-            print("The first Unity smoke run generates the playable Beacon Relay scene.")
     print("Sign in to each selected CLI with your own account before running jobs.")
     doctor(root, config)
 
@@ -554,15 +534,8 @@ def smoke(args, root, config):
     engine = config["engine"]
     directory = job_folder(root, "smoke")
     argv = command_for(root, config, engine)
-    if args.sample and not config.get("sample"):
-        raise ValueError("The sample smoke action is available only in generated sample projects.")
     if engine == "godot":
-        argv += ["--headless", "--path", str(root)]
-        argv += ["--", "--studio-smoke"] if args.sample else ["--editor", "--import"]
-    elif args.sample:
-        argv += ["-batchmode", "-nographics", "-quit", "-projectPath", str(root),
-                 "-executeMethod", "BeaconStudio.Build", "-logFile", str(directory / "unity.log"),
-                 "-studioBuildPath", str(directory / "BeaconRelay.exe")]
+        argv += ["--headless", "--path", str(root), "--editor", "--import"]
     else:
         argv += ["-batchmode", "-nographics", "-quit", "-projectPath", str(root),
                  "-logFile", str(directory / "unity.log")]
@@ -575,7 +548,6 @@ def parser():
     commands = cli.add_subparsers(dest="command", required=True)
     wizard = commands.add_parser("setup")
     wizard.add_argument("--engine", choices=("unity", "godot"))
-    wizard.add_argument("--template", choices=("blank", "beacon"))
     wizard.add_argument("--agents", nargs="+")
     wizard.add_argument("--provider-file", action="append", default=[])
     wizard.add_argument("--route", action="append", default=[], metavar="ROLE=PROVIDER")
@@ -609,7 +581,6 @@ def parser():
     flow.add_argument("--dry-run", action="store_true")
     flow.add_argument("--timeout", type=int, default=1800)
     test = commands.add_parser("smoke")
-    test.add_argument("--sample", action="store_true")
     test.add_argument("--timeout", type=int, default=900)
     return cli
 

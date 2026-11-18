@@ -1,4 +1,4 @@
-"""Integration checks for the portable CLI. Engine tests use smoke --sample."""
+"""Integration checks for the portable CLI. Engine import checks use smoke."""
 import json
 from pathlib import Path
 import shutil
@@ -36,9 +36,9 @@ class StudioTest(unittest.TestCase):
         self.assertEqual(settings["roles"]["marketing"], "claude")
 
     def test_workflow_dry_run(self):
-        self.run_cli("setup", "--engine", "unity", "--template", "beacon",
+        self.run_cli("setup", "--engine", "unity",
                      "--agents", "codex", "claude", "gemini", "--non-interactive")
-        self.run_cli("workflow", str(REPO / "examples/beacon-relay.md"),
+        self.run_cli("workflow", str(REPO / "examples/game-brief.md"),
                      "--through", "marketing", "--dry-run")
         manifest = next((self.project / ".studio/jobs").glob("*/workflow.json"))
         steps = json.loads(manifest.read_text(encoding="utf-8"))["stages"]
@@ -59,7 +59,7 @@ class StudioTest(unittest.TestCase):
         mapping.write_text(json.dumps({"fixture": [sys.executable, str(mock)]}), encoding="utf-8")
         self.run_cli("setup", "--engine", "godot", "--agents", "fixture", "--provider-file",
                      str(mapping), "--non-interactive")
-        self.run_cli("workflow", str(REPO / "examples/beacon-relay.md"),
+        self.run_cli("workflow", str(REPO / "examples/game-brief.md"),
                      "--from", "qa", "--through", "marketing", expected=4)
         run = next((self.project / ".studio/jobs").glob("workflow-*"))
         self.assertFalse((run / "marketing").exists())
@@ -76,17 +76,17 @@ assert memory.is_file()
 partial = Path('partial-work.txt')
 if sys.argv[1] == 'primary':
     partial.write_text('saved edit')
-    memory.write_text('The relay uses amber.')
-    (folder / 'checkpoint.md').write_text('Next: verify the core interaction.')
+    memory.write_text('The pickup uses amber.')
+    (folder / 'checkpoint.md').write_text('Next: verify the pickup interaction.')
     (folder / 'report.md').write_text('Incomplete report')
     print(json.dumps({'type': 'turn.failed', 'error': {'message': 'You have hit your usage limit'}}))
     sys.exit(1)
 assert partial.read_text() == 'saved edit'
-assert memory.read_text() == 'The relay uses amber.'
+assert memory.read_text() == 'The pickup uses amber.'
 if 'role: producer' in prompt:
     assert 'Prior attempt folders' in prompt
     checkpoint = folder.parent / 'attempt-1-primary/checkpoint.md'
-    assert checkpoint.read_text() == 'Next: verify the core interaction.'
+    assert checkpoint.read_text() == 'Next: verify the pickup interaction.'
 else:
     assert 'attempt-2-backup' in prompt
 (folder / 'report.md').write_text('Verified and completed')
@@ -99,7 +99,7 @@ else:
         }), encoding="utf-8")
         self.run_cli("setup", "--engine", "godot", "--agents", "primary", "backup",
                      "--provider-file", str(mapping), "--non-interactive")
-        self.run_cli("workflow", str(REPO / "examples/beacon-relay.md"), "--through", "gameplay")
+        self.run_cli("workflow", str(REPO / "examples/game-brief.md"), "--through", "gameplay")
         run = next((self.project / ".studio/jobs").glob("workflow-*"))
         for role in ("producer", "gameplay"):
             handoff = json.loads((run / role / "handoff.json").read_text(encoding="utf-8"))
@@ -117,10 +117,10 @@ prompt = sys.stdin.read()
 assert 'StudioMemory/*.json' in prompt
 folder = Path(re.search(r'Job output directory: (.+)', prompt)[1])
 (folder / 'memory.json').write_text(json.dumps({
-    'decisions': ['Use an amber relay core.'],
+    'decisions': ['Use a clearly marked pickup.'],
     'next_steps': ['Test the pickup interaction.'],
-    'lessons': [{'rule': 'Replay pickup and restart after changing the core.',
-                 'evidence': 'Pickup and restart replay passed after replacing the core.'}]
+    'lessons': [{'rule': 'Replay pickup and restart after changing the item.',
+                 'evidence': 'Pickup and restart replay passed after replacing the item.'}]
 }))
 (folder / 'report.md').write_text('Fixture report')
 """,
@@ -145,7 +145,7 @@ folder = Path(re.search(r'Job output directory: (.+)', prompt)[1])
         git("config", "commit.gpgsign", "false")
         (self.project / "unrelated.txt").write_text("Already staged", encoding="utf-8")
         git("add", "--", "unrelated.txt")
-        self.run_cli("job", "producer", str(REPO / "examples/beacon-relay.md"))
+        self.run_cli("job", "producer", str(REPO / "examples/game-brief.md"))
         committed = git("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
         self.assertTrue(committed.startswith("StudioMemory/"), committed)
         self.assertEqual(git("diff", "--cached", "--name-only"), "unrelated.txt")
@@ -153,13 +153,13 @@ folder = Path(re.search(r'Job output directory: (.+)', prompt)[1])
         git("clone", "--no-hardlinks", self.project.name, clone.name, cwd=self.project.parent)
         record = next((clone / "StudioMemory").glob("*.json"))
         data = json.loads(record.read_text(encoding="utf-8"))
-        self.assertEqual(data["attempts"][0]["decisions"], ["Use an amber relay core."])
+        self.assertEqual(data["attempts"][0]["decisions"], ["Use a clearly marked pickup."])
         self.assertFalse((clone / ".studio/config.json").exists())
 
         def planned_lessons(role):
             jobs = self.project / ".studio/jobs"
             before = set(jobs.iterdir())
-            self.run_cli("job", role, str(REPO / "examples/beacon-relay.md"), "--dry-run")
+            self.run_cli("job", role, str(REPO / "examples/game-brief.md"), "--dry-run")
             job, = set(jobs.iterdir()) - before
             lines = (job / "prompt.txt").read_text(encoding="utf-8").splitlines()
             line = next(line for line in lines if line.startswith("Approved playbook lessons"))

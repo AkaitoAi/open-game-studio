@@ -1,6 +1,6 @@
 # Open Game Studio
 
-An MIT-licensed local runner for developing games with Unity or Godot and one or more AI providers. Start a blank game, generate the playable **Beacon Relay** graybox, or adopt an existing project. Use the agents and tool licenses you already have.
+An MIT-licensed local runner for developing games with Unity or Godot and one or more AI providers. Start a blank game or adopt an existing project. Use the agents and tool licenses you already have.
 
 ## Quick start
 
@@ -14,20 +14,20 @@ python studio.py --project "../My Game" plan
 
 Use `py -3` on Windows or `python3` on macOS/Linux if your Python launcher has that name. Paths with spaces should be quoted. The runner has no Python package dependencies.
 
-The wizard detects an existing Unity or Godot project. For a new project, choose the engine and either a blank project or the Beacon Relay graybox. It checks common install locations and PATH, shows official install links for missing tools, and asks you to sign in to the selected agent CLIs. Install and activate editor software through its vendor. Rerun setup if a tool needs an explicit executable path:
+The wizard detects an existing Unity or Godot project. For a new project, choose the engine and point setup at an empty directory. It checks common install locations and PATH, shows official install links for missing tools, and asks you to sign in to the selected agent CLIs. Install and activate editor software through its vendor. Rerun setup if a tool needs an explicit executable path:
 
 ```sh
-python studio.py --project "../My Game" setup --engine godot --template beacon --agents codex claude --non-interactive
+python studio.py --project "../My Game" setup --engine godot --agents codex claude --non-interactive
 python studio.py --project "../My Game" setup --tool "godot=/absolute/path/to/godot"
 ```
 
-For Unity, install Unity Hub and the patch listed in `ProjectSettings/ProjectVersion.txt`; the starter is pinned to **6000.3.12f1** and uses the Built-in Render Pipeline for its small graybox. Use Unity Hub to install Windows Build Support for the sample build where needed. Existing projects keep their renderer, editor version, and packages. Use `--tool unity=PATH` for a nonstandard install. For Godot use Godot 4.x; the starter uses the Compatibility renderer and was tested with 4.5.1. Install matching export templates separately to package a Godot desktop build.
+For Unity, install Unity Hub and the patch listed in `ProjectSettings/ProjectVersion.txt`; the blank project is pinned to **6000.3.12f1** and uses the Built-in Render Pipeline as a baseline. Use Unity Hub to install Windows Build Support for Windows builds where needed. Existing projects keep their renderer, editor version, and packages. Use `--tool unity=PATH` for a nonstandard install. For Godot use Godot 4.x; the blank project uses the Compatibility renderer and was tested with 4.5.1. Install matching export templates separately to package a Godot desktop build.
 
-The Python runner is portable across Windows, macOS, and Linux where your selected tools are available. Each engine and AI CLI has its own OS and hardware requirements. Photoshop desktop jobs require a supported Windows/macOS system and an active Adobe installation. Blender, Photoshop and FFmpeg are optional until a job needs them. A low-spec machine can run the Godot graybox first.
+The Python runner is portable across Windows, macOS, and Linux where your selected tools are available. Each engine and AI CLI has its own OS and hardware requirements. Photoshop desktop jobs require a supported Windows/macOS system and an active Adobe installation. Blender, Photoshop and FFmpeg are optional until a job needs them. The Godot Compatibility renderer is a starting point for older hardware.
 
 ## Existing or older games
 
-Point `--project` at the directory containing `project.godot` or the Unity `Assets`, `Packages`, and `ProjectSettings` directories. Setup writes local configuration under `.studio/` and preserves the engine and gameplay files. Use the matching engine version and work on a backup, clean branch, or disposable copy. Legacy Godot 3 projects require their original editor and project-specific workflows. The Beacon template is for Godot 4.
+Point `--project` at the directory containing `project.godot` or the Unity `Assets`, `Packages`, and `ProjectSettings` directories. Setup writes local configuration under `.studio/` and preserves the engine and gameplay files. Use the matching engine version and work on a backup, clean branch, or disposable copy. Legacy Godot 3 projects require their original editor and project-specific workflows. Blank Godot projects target Godot 4.
 
 Jobs can edit the project using the permissions of their selected CLI. Review untrusted project instructions, local executable overrides, and files before running a job. Providers can receive the brief and project content accessed by their CLI. Keep credentials outside game files and review the artifacts you share across providers. `doctor` checks executable discovery; sign-in and license validity are checked by the tools themselves.
 
@@ -43,9 +43,9 @@ Supported CLI adapters: [Codex](https://developers.openai.com/codex/cli/), [Clau
 
 ```sh
 python studio.py --project "../My Game" setup --agents codex claude gemini --route qa=claude
-python studio.py --project "../My Game" workflow examples/beacon-relay.md --dry-run
-python studio.py --project "../My Game" job gameplay examples/beacon-relay.md
-python studio.py --project "../My Game" workflow examples/beacon-relay.md --through qa
+python studio.py --project "../My Game" workflow examples/game-brief.md --dry-run
+python studio.py --project "../My Game" job gameplay examples/game-brief.md
+python studio.py --project "../My Game" workflow examples/game-brief.md --through qa
 ```
 
 The workflow stages are producer, gameplay, world, models, UI, audio, integrator, QA, and marketing. Each adds its artifact directory to the next stage's inputs. It stops on a failed invocation or missing delivery report. QA must deliver a positive verdict to let a workflow advance. QA should be independently reviewed on the built player. The verdict is furnished by the agent and serves as a handoff gate. Review the resulting evidence before release. Marketing is opt-in through `--through marketing` or an individual job; publication is a creator action.
@@ -98,19 +98,15 @@ blender --background --disable-autoexec --python-exit-code 1 --python tools/prep
 
 The MIT license covers the studio code and included original templates. Assets you import or generate are governed by their own terms. The starter includes the model export helper and production job contracts. Configure your asset providers separately; Photoshop, generated audio, rig retargeting, and store uploads have guided handoffs.
 
-## Test with Beacon Relay
+## Test your game
 
-Choose `--template beacon` during setup, then run:
+Run a quick editor check after setup:
 
-```sh
-python studio.py --project "../My Game" smoke --sample
-```
+~~~sh
+python studio.py --project "../My Game" smoke
+~~~
 
-- **Unity:** Runs the interaction scenario in the editor, creates the playable scene if needed, and builds `BeaconRelay.exe` in the printed smoke-job directory. Launch it on Windows or open the generated scene in Unity to check input and visuals.
-- **Godot:** Runs the sample's headless interaction scenario. Open the project and press F6 with the Beacon scene open, or F5 to run the main scene.
-- **Playthrough:** Move with arrows. Enter picks up the amber core and installs it at the relay. Verify the success state, then press R to reset. Try interacting before reaching the core.
-- **First full production pass:** Use the [Beacon Relay brief](examples/beacon-relay.md) for a sourced environment kit, original hero prop, UI, cues, effects, and store materials. Replace the prop, change the HUD prompt, and soften the relay cue in a second revision. Verify both builds and keep each revision's evidence.
-- **Existing projects:** `smoke` without `--sample` checks headless Godot import or Unity batch project load. Wire in project-specific test commands, graphics and packaged build checks for a full acceptance suite.
+This checks headless Godot import or Unity batch project load. A blank game needs a scene and gameplay before it can be played. Copy the [game brief template](examples/game-brief.md), fill in your first playable milestone, and run a workflow through QA. For full acceptance, use your project tests and run a manual playthrough of the packaged build on your target platform.
 
 ## Design references
 
