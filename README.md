@@ -70,6 +70,18 @@ python studio.py --project "../My Game" setup --memory-commit --non-interactive
 
 This commits only the new memory file. Your game changes and previously staged files stay available for normal review and commit. Review generated notes, then commit the game changes and push the game branch when ready. On the other PC, clone or pull that branch and run setup for the installed tools and agent accounts. The next job can read the tracked history. Machine-specific configuration, raw logs, private local notes, and staged artifacts under `.studio/` remain local. Commit or otherwise transfer any assets and builds needed for the next job. Use `--no-memory-commit` to keep journal generation while turning off automatic local commits.
 
+### Improve the workflow over time
+
+After a job, agents can propose reusable lessons in the project memory. Each proposal pairs a rule with evidence, such as a failed build or replay and the check that passed after a fix. Proposals from interrupted jobs can help diagnose recurrent problems. Review the evidence and use the playbook to promote practices you want future jobs to follow:
+
+```sh
+python studio.py --project "../My Game" learn list
+python studio.py --project "../My Game" learn approve RECORD_ID 1
+python studio.py --project "../My Game" learn retire RECORD_ID 1
+```
+
+Replace `RECORD_ID` and the number with the values from `learn list`. An approved rule goes into `StudioMemory/Playbook/` and is included in subsequent prompts for the originating role. Add `--all-roles` when a lesson applies across the studio. The runner includes up to ten recent approved rules per job. Retiring a rule removes it from future prompts and preserves the review history. With memory commits enabled, approvals and retirements are committed locally and travel with the game branch after you push.
+
 Use `--from ROLE` plus repeated `--input PATH` to pick up work from prior jobs. To extend the system, supply `--provider-file providers.json` with an ID mapped to an argument list such as `{"my-agent":["/absolute/path/to/agent","--stdin"]}`. The custom executable receives a UTF-8 prompt on standard input and runs from the game directory. It should emit a process exit code and create the requested report. Select it with `--agents` and assign it with `--route ROLE=my-agent`. Provider-specific credentials live in their CLI or local environment. Reusable role instructions live in `roles.json`.
 
 ## Production and release

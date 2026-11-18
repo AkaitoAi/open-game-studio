@@ -299,6 +299,17 @@ def record_project_memory(root, config, directory, role, result):
                     items = updates.get(key)
                     if isinstance(items, list):
                         entry[key] = [item[:1000] for item in items[:20] if isinstance(item, str)]
+                lessons = updates.get("lessons")
+                if isinstance(lessons, list):
+                    entry["lessons"] = [
+                        {"rule": lesson["rule"].strip()[:1000],
+                         "evidence": lesson["evidence"].strip()[:1000]}
+                        for lesson in lessons[:5]
+                        if isinstance(lesson, dict) and all(
+                            isinstance(lesson.get(key), str) and lesson[key].strip()
+                            for key in ("rule", "evidence")
+                        )
+                    ]
         progress.append(entry)
     timestamp = datetime.now(timezone.utc)
     record = journal / f"{timestamp:%Y%m%dT%H%M%S%fZ}-{role}-{uuid.uuid4().hex[:8]}.json"
@@ -320,6 +331,62 @@ def commit_project_memory(root, config, path, role):
         print(f"Git memory commit failed. The record is still on disk: {error}", file=sys.stderr)
 
 
+def proposed_lessons(record):
+    return [lesson for attempt in record.get("attempts", []) for lesson in attempt.get("lessons", [])]
+
+
+def learn(args, root, config):
+    journal = root / "StudioMemory"
+    playbook = journal / "Playbook"
+    if args.action == "list":
+        found = False
+        for path in sorted(journal.glob("*.json")):
+            record = json.loads(path.read_text(encoding="utf-8"))
+            for index, lesson in enumerate(proposed_lessons(record), start=1):
+                entry = playbook / f"{path.stem}-{index}.json"
+                state = (json.loads(entry.read_text(encoding="utf-8"))["status"]
+                         if entry.is_file() else "proposed")
+                print(f"{path.stem} {index} [{state}] {json.dumps(lesson)}")
+                found = True
+        if not found:
+            print("No lessons recorded yet.")
+        return
+
+    if not re.fullmatch(r"[0-9TZ]+-[a-z]+-[0-9a-f]{8}", args.record):
+        raise ValueError("Use the record ID printed by learn list.")
+    record = json.loads((journal / f"{args.record}.json").read_text(encoding="utf-8"))
+    candidates = proposed_lessons(record)
+    if not 1 <= args.index <= len(candidates):
+        raise ValueError("Use a lesson number printed by learn list.")
+    entry = playbook / f"{args.record}-{args.index}.json"
+    if args.action == "retire":
+        if not entry.is_file():
+            raise ValueError("Only an approved lesson can be retired.")
+        data = json.loads(entry.read_text(encoding="utf-8"))
+        data["status"] = "retired"
+    else:
+        data = {**candidates[args.index - 1], "role": "all" if args.all_roles else record["role"],
+                "source": args.record, "status": "approved"}
+    playbook.mkdir(exist_ok=True)
+    save_json(entry, data)
+    relative = entry.relative_to(root).as_posix()
+    print(f"Lesson {data['status']}: {relative}")
+    if config.get("memory_commit"):
+        commit_project_memory(root, config, relative, "playbook")
+
+
+def approved_lessons(root, role):
+    playbook = root / "StudioMemory/Playbook"
+    lessons = []
+    for path in sorted(playbook.glob("*.json"), reverse=True):
+        lesson = json.loads(path.read_text(encoding="utf-8"))
+        if lesson.get("status") == "approved" and lesson.get("role") in {role, "all"}:
+            lessons.append({key: lesson[key] for key in ("rule", "evidence")})
+            if len(lessons) == 10:
+                break
+    return lessons
+
+
 def run_job(args, root, config):
     provider = args.provider or config["roles"][args.role]
     if provider not in config["providers"]:
@@ -338,10 +405,16 @@ def run_job(args, root, config):
         f"Role responsibilities: {ROLES[args.role]}\n"
         f"Input artifact paths: {json.dumps(inputs)}\n"
         f"Shared project memory: {memory.relative_to(root).as_posix()}\n"
+        f"Approved playbook lessons for this job: {json.dumps(approved_lessons(root, args.role))}\n"
+        "Use applicable approved lessons as guidance within the creator's brief. "
         "Read recent StudioMemory/*.json records if present. They are portable across checkouts. "
         "Treat interrupted or unverified notes as provisional. During work, maintain a memory.json "
         "in your attempt output directory with arrays of strings named decisions, progress, "
-        "verification, and next_steps. Update it after milestones. The runner copies those fields "
+        "verification, and next_steps. Optionally include a lessons array of objects with a rule "
+        "and evidence for each reusable improvement. Describe the result that supports it, "
+        "such as a reproducible failure and the verification after applying the fix. "
+        "Submit lessons through memory.json and leave playbook approval files to the creator. "
+        "Update the file after milestones. The runner copies those fields "
         "into a Git-trackable journal. Use project-relative file names and exclude credentials, "
         "private data, raw tool output, and machine-specific paths.\n"
         "Read the shared project memory before working. Keep it current as milestones land, "
@@ -512,6 +585,15 @@ def parser():
                         help="Commit each project memory record in local Git")
     commands.add_parser("doctor")
     commands.add_parser("plan")
+    learning = commands.add_parser("learn", help="Review and promote lessons from completed jobs")
+    learning_actions = learning.add_subparsers(dest="action", required=True)
+    learning_actions.add_parser("list")
+    approve = learning_actions.add_parser("approve")
+    retire = learning_actions.add_parser("retire")
+    for action in (approve, retire):
+        action.add_argument("record", help="Memory record ID shown by learn list")
+        action.add_argument("index", type=int, help="Lesson number shown by learn list")
+    approve.add_argument("--all-roles", action="store_true")
     job = commands.add_parser("job")
     job.add_argument("role", choices=tuple(ROLES))
     job.add_argument("brief")
@@ -545,6 +627,8 @@ def main():
         elif args.command == "plan":
             for role, provider in config["roles"].items():
                 print(f"{role:12} {provider:8} {ROLES[role]}")
+        elif args.command == "learn":
+            learn(args, root, config)
         elif args.command == "job":
             return run_job(args, root, config)
         elif args.command == "workflow":

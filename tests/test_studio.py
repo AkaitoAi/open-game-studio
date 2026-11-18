@@ -118,7 +118,9 @@ assert 'StudioMemory/*.json' in prompt
 folder = Path(re.search(r'Job output directory: (.+)', prompt)[1])
 (folder / 'memory.json').write_text(json.dumps({
     'decisions': ['Use an amber relay core.'],
-    'next_steps': ['Test the pickup interaction.']
+    'next_steps': ['Test the pickup interaction.'],
+    'lessons': [{'rule': 'Replay pickup and restart after changing the core.',
+                 'evidence': 'Pickup and restart replay passed after replacing the core.'}]
 }))
 (folder / 'report.md').write_text('Fixture report')
 """,
@@ -153,6 +155,26 @@ folder = Path(re.search(r'Job output directory: (.+)', prompt)[1])
         data = json.loads(record.read_text(encoding="utf-8"))
         self.assertEqual(data["attempts"][0]["decisions"], ["Use an amber relay core."])
         self.assertFalse((clone / ".studio/config.json").exists())
+
+        def planned_lessons(role):
+            jobs = self.project / ".studio/jobs"
+            before = set(jobs.iterdir())
+            self.run_cli("job", role, str(REPO / "examples/beacon-relay.md"), "--dry-run")
+            job, = set(jobs.iterdir()) - before
+            lines = (job / "prompt.txt").read_text(encoding="utf-8").splitlines()
+            line = next(line for line in lines if line.startswith("Approved playbook lessons"))
+            return json.loads(line.split(": ", 1)[1])
+
+        self.assertIn("[proposed]", self.run_cli("learn", "list"))
+        self.assertEqual(planned_lessons("producer"), [])
+        self.run_cli("learn", "approve", record.stem, "1")
+        self.assertEqual(len(planned_lessons("producer")), 1)
+        self.assertEqual(planned_lessons("qa"), [])
+        self.assertIn("[approved]", self.run_cli("learn", "list"))
+        self.assertEqual(git("diff", "--cached", "--name-only"), "unrelated.txt")
+        self.run_cli("learn", "retire", record.stem, "1")
+        self.assertEqual(planned_lessons("producer"), [])
+        self.assertIn("[retired]", self.run_cli("learn", "list"))
 
 
 if __name__ == "__main__":
