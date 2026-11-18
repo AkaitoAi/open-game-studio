@@ -1,0 +1,12 @@
+{
+  "id": "relay-core",
+  "version": 1,
+  "purpose": "Portable power source the player can recognize from a distance",
+  "source": {"kind": "original", "creator": "replace before approval", "url_or_job": null},
+  "rights": {"license": null, "evidence": null, "attribution": null},
+  "source_file": "relay-core.blend",
+  "derivative": "relay-core.fbx",
+  "sha256": null,
+  "import": {"units": "meters", "pivot": "base", "max_triangles": 2500},
+  "status": "draft"
+}

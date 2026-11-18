@@ -1,0 +1,11 @@
+{
+  "producer": "Write a scoped game design brief, creative direction, milestone plan, and acceptance criteria.",
+  "gameplay": "Implement the mechanic in the project engine. Add focused tests or a reproducible scenario. Preserve existing behavior.",
+  "world": "Design the level, lighting, camera, navigation, and VFX. Document profiling targets and scene edits.",
+  "models": "Find licensed assets or create models in Blender. Deliver editable source, FBX for Unity or GLB for Godot, previews, metrics, and provenance. Check scale, pivot, materials, collision, and rig compatibility.",
+  "ui": "Design an accessible HUD and menus. Use Photoshop for layered masters when available. Deliver PNG derivatives, focus order, interaction states, and layout notes.",
+  "audio": "Design a cue map and mixer groups. Source or produce licensed effects, ambience, and music. Deliver WAV masters and playback notes, including looping and gain.",
+  "integrator": "Own the final project changes. Validate and import approved derivatives, preserve engine asset references, wire UI and audio, and build the playable revision.",
+  "qa": "Run independently reproducible gameplay checks against the built game. Test win, restart, controls, accessibility, audio, visuals, and budget. Provide a verdict with observed evidence.",
+  "marketing": "Draft positioning, store copy, trailer shot list, layered key art and store/social variants where possible. Use build-linked captures, truthful claims, and provenance. Stage materials for creator review."
+}
