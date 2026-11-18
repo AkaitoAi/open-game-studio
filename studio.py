@@ -1,5 +1,6 @@
 """Portable local game production runner. Python 3.10+; no dependencies."""
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -168,7 +169,11 @@ def setup(args, root):
             project_file.write_text(project_file.read_text(encoding="utf-8")
                                     .replace('config/name="Beacon Relay"', 'config/name="New Game"')
                                     .replace('run/main_scene="res://beacon.tscn"\n', ''), encoding="utf-8")
+    memory_commit = args.memory_commit
+    if memory_commit is None:
+        memory_commit = previous.get("memory_commit", False)
     config = {"engine": engine, "providers": providers, "roles": roles, "tools": tools,
+              "memory_commit": memory_commit,
               "custom_providers": custom, "sample": sample}
     write_config(root, config)
     print(f"{engine} project at {root}")
@@ -272,6 +277,49 @@ def shared_memory(root):
     return path
 
 
+def record_project_memory(root, config, directory, role, result):
+    journal = root / "StudioMemory"
+    journal.mkdir(exist_ok=True)
+    attempts = []
+    handoff = directory / "handoff.json"
+    if handoff.is_file():
+        attempts = json.loads(handoff.read_text(encoding="utf-8"))["attempts"]
+    progress = []
+    for attempt in attempts:
+        folder = attempt["directory"]
+        entry = {key: attempt[key] for key in ("provider", "state")}
+        if folder:
+            path = Path(folder) / "memory.json"
+            try:
+                updates = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                updates = {}
+            if isinstance(updates, dict):
+                for key in ("decisions", "progress", "verification", "next_steps"):
+                    items = updates.get(key)
+                    if isinstance(items, list):
+                        entry[key] = [item[:1000] for item in items[:20] if isinstance(item, str)]
+        progress.append(entry)
+    timestamp = datetime.now(timezone.utc)
+    record = journal / f"{timestamp:%Y%m%dT%H%M%S%fZ}-{role}-{uuid.uuid4().hex[:8]}.json"
+    save_json(record, {"time": timestamp.isoformat(), "role": role, "exit_code": result,
+                       "status": "passed" if result == 0 else "interrupted", "attempts": progress})
+    relative = record.relative_to(root).as_posix()
+    print(f"Project memory: {relative}")
+    if config.get("memory_commit"):
+        commit_project_memory(root, config, relative, role)
+
+
+def commit_project_memory(root, config, path, role):
+    try:
+        git = command_for(root, config, "git")
+        for args in (["add", "--intent-to-add", "--", path],
+                     ["commit", "--only", "-m", f"Record studio memory for {role}", "--", path]):
+            subprocess.run(git + args, cwd=root, check=True, timeout=30)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"Git memory commit failed. The record is still on disk: {error}", file=sys.stderr)
+
+
 def run_job(args, root, config):
     provider = args.provider or config["roles"][args.role]
     if provider not in config["providers"]:
@@ -290,6 +338,12 @@ def run_job(args, root, config):
         f"Role responsibilities: {ROLES[args.role]}\n"
         f"Input artifact paths: {json.dumps(inputs)}\n"
         f"Shared project memory: {memory.relative_to(root).as_posix()}\n"
+        "Read recent StudioMemory/*.json records if present. They are portable across checkouts. "
+        "Treat interrupted or unverified notes as provisional. During work, maintain a memory.json "
+        "in your attempt output directory with arrays of strings named decisions, progress, "
+        "verification, and next_steps. Update it after milestones. The runner copies those fields "
+        "into a Git-trackable journal. Use project-relative file names and exclude credentials, "
+        "private data, raw tool output, and machine-specific paths.\n"
         "Read the shared project memory before working. Keep it current as milestones land, "
         "including decisions, files changed, verification, and next steps. Use checkpoint.md "
         "in the job output folder to record partial work throughout the job.\n"
@@ -309,6 +363,15 @@ def run_job(args, root, config):
         print(f"{args.role} via {provider} -> {directory}", flush=True)
         return 0
 
+    result = 2
+    try:
+        result = run_attempts(args, root, config, directory, provider, instructions)
+        return result
+    finally:
+        record_project_memory(root, config, directory, args.role, result)
+
+
+def run_attempts(args, root, config, directory, provider, instructions):
     exhausted = getattr(args, "exhausted", set())
     candidates = [provider, *(name for name in config["providers"] if name != provider)]
     attempts = []
@@ -445,6 +508,8 @@ def parser():
     wizard.add_argument("--route", action="append", default=[], metavar="ROLE=PROVIDER")
     wizard.add_argument("--tool", action="append", default=[], metavar="NAME=PATH")
     wizard.add_argument("--non-interactive", action="store_true")
+    wizard.add_argument("--memory-commit", action=argparse.BooleanOptionalAction, default=None,
+                        help="Commit each project memory record in local Git")
     commands.add_parser("doctor")
     commands.add_parser("plan")
     job = commands.add_parser("job")

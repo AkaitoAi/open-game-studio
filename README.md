@@ -58,6 +58,18 @@ Enable two or more signed-in providers with `setup --agents codex claude`. If th
 
 If no backup can finish, the workflow stops with the project edits and checkpoints intact. Use `--from ROLE` and `--input` to point a later run at the relevant successful handoffs and interrupted attempt folder. This preserves saved files and checkpoints. Any reasoning or edits the provider never saved cannot be recovered.
 
+### Carry project memory to another PC
+
+Every real agent job writes a separate record in `StudioMemory/`, including interrupted jobs. The record contains the runner outcome and any structured decisions, progress, verification, and next steps the agent saved. Agents are instructed to review this directory at the start of a job. Keeping one file per job allows Git to merge histories from separate branches without a shared log file conflict.
+
+Enable local memory commits in an initialized game repository:
+
+```sh
+python studio.py --project "../My Game" setup --memory-commit --non-interactive
+```
+
+This commits only the new memory file. Your game changes and previously staged files stay available for normal review and commit. Review generated notes, then commit the game changes and push the game branch when ready. On the other PC, clone or pull that branch and run setup for the installed tools and agent accounts. The next job can read the tracked history. Machine-specific configuration, raw logs, private local notes, and staged artifacts under `.studio/` remain local. Commit or otherwise transfer any assets and builds needed for the next job. Use `--no-memory-commit` to keep journal generation while turning off automatic local commits.
+
 Use `--from ROLE` plus repeated `--input PATH` to pick up work from prior jobs. To extend the system, supply `--provider-file providers.json` with an ID mapped to an argument list such as `{"my-agent":["/absolute/path/to/agent","--stdin"]}`. The custom executable receives a UTF-8 prompt on standard input and runs from the game directory. It should emit a process exit code and create the requested report. Select it with `--agents` and assign it with `--route ROLE=my-agent`. Provider-specific credentials live in their CLI or local environment. Reusable role instructions live in `roles.json`.
 
 ## Production and release

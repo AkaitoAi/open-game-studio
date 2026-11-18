@@ -1,6 +1,7 @@
 """Integration checks for the portable CLI. Engine tests use smoke --sample."""
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -105,6 +106,53 @@ else:
             self.assertEqual(handoff["provider"], "backup")
             self.assertEqual(handoff["exit_code"], 0)
         self.assertFalse((run / "gameplay/attempt-1-primary").exists())
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required for the memory commit check")
+    def test_memory_commit_excludes_unrelated_staged_files(self):
+        worker = self.project.parent / "worker.py"
+        worker.write_text(
+            """import json, re, sys
+from pathlib import Path
+prompt = sys.stdin.read()
+assert 'StudioMemory/*.json' in prompt
+folder = Path(re.search(r'Job output directory: (.+)', prompt)[1])
+(folder / 'memory.json').write_text(json.dumps({
+    'decisions': ['Use an amber relay core.'],
+    'next_steps': ['Test the pickup interaction.']
+}))
+(folder / 'report.md').write_text('Fixture report')
+""",
+            encoding="utf-8",
+        )
+        mapping = worker.with_suffix(".json")
+        mapping.write_text(json.dumps({"fixture": [sys.executable, str(worker)]}), encoding="utf-8")
+        self.run_cli("setup", "--engine", "godot", "--agents", "fixture", "--provider-file",
+                     str(mapping), "--memory-commit", "--non-interactive")
+
+        def git(*args, cwd=None):
+            result = subprocess.run(["git", *args], cwd=cwd or self.project, check=False,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.strip()
+
+        git("init")
+        git("config", "user.name", "Studio Fixture")
+        git("config", "user.email", "studio@example.invalid")
+        git("add", "--", "project.godot")
+        git("commit", "-m", "Seed game")
+        git("config", "commit.gpgsign", "false")
+        (self.project / "unrelated.txt").write_text("Already staged", encoding="utf-8")
+        git("add", "--", "unrelated.txt")
+        self.run_cli("job", "producer", str(REPO / "examples/beacon-relay.md"))
+        committed = git("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
+        self.assertTrue(committed.startswith("StudioMemory/"), committed)
+        self.assertEqual(git("diff", "--cached", "--name-only"), "unrelated.txt")
+        clone = self.project.parent / "Second checkout"
+        git("clone", "--no-hardlinks", self.project.name, clone.name, cwd=self.project.parent)
+        record = next((clone / "StudioMemory").glob("*.json"))
+        data = json.loads(record.read_text(encoding="utf-8"))
+        self.assertEqual(data["attempts"][0]["decisions"], ["Use an amber relay core."])
+        self.assertFalse((clone / ".studio/config.json").exists())
 
 
 if __name__ == "__main__":
